@@ -9,6 +9,10 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    # TA LINIJKA WYCISZY WARNING I WYMUSI NOWSZĄ WERSJĘ NODE.JS:
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
