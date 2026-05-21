@@ -1,0 +1,29 @@
+name: Sync KPI
+
+on:
+  schedule:
+    # Uruchamia automatycznie o godzinach (Czas Polski)
+    - cron: '0 9,11,13,16,18,20 * * *'
+    
+  workflow_dispatch: # Ręczne uruchomienie przyciskiem
+    
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - run: pip install notion-client
+      
+      - name: Run Sync
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          KALENDARZ_DB_ID: ${{ secrets.KALENDARZ_DB_ID }}
+          AKTYWNOSCI_DB_ID: ${{ secrets.AKTYWNOSCI_DB_ID }}
+          WYNIKI_DB_ID: ${{ secrets.WYNIKI_DB_ID }}
+        run: echo "Rozpoczynamy synchronizację..."
