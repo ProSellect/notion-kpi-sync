@@ -1,20 +1,12 @@
-name: Sync KPI
-
-on:
-  schedule:
-    # Uruchamia automatycznie o godzinach (Czas Polski)
-    - cron: '0 9,11,13,16,18,20 * * *'
-    
-  workflow_dispatch: # Ręczne uruchomienie przyciskiem
-    
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
       
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       
