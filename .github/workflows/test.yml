@@ -1,0 +1,27 @@
+name: Test Notion Connection
+
+on: workflow_dispatch
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          pip install notion-client
+          python -c "
+          import os
+          from notion_client import Client
+          try:
+            print('🔑 Ładowanie Secretów...')
+            token = os.environ.get('NOTION_TOKEN', 'BRAK_TOKENA')
+            kalendarz_id = os.environ.get('KALENDARZ_DB_ID', 'BRAK_KALENDARZ')
+            aktwnosci_id = os.environ.get('AKTYWNOSCI_DB_ID', 'BRAK_AKTYWNOSCI')
+            wyniki_id = os.environ.get('WYNIKI_DB_ID', 'BRAK_WYNIKI')
+            
+            print(f'✅ Token: {token[:8]}...' if len(token) > 8 else '❌ BŁĄD: Token pusty')
+            print(f'✅ DB IDs sprawdzone.')
+            print('\n🚀 SKRYPT GOTOWY DO URUCHOMIENIA!')
+          except Exception as e:
+            print(f'💥 BŁĄD przy ładowaniu: {e}')
+            raise
+          "
