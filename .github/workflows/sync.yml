@@ -1,8 +1,22 @@
+name: Sync KPI
+
+# ⚠️ TO JEST KLUCZOWE - TU MIESCI SIĘ WYWOŁANIE AKCJI
+on:
+  # Automatycznie o podanych godzinach (UTC)
+  # Dostosowanie do czasu Polskiego (PL):
+  # Zima UTC+1: 9:00 PL = 8:00 UTC
+  # Lato  UTC+2: 10:00 PL = 8:00 UTC
+  schedule:
+    - cron: '0 6,8,10,13,15,17,19 * * *'
+
+  # Ręczne uruchomienie z poziomu GitHub Actions (prycisk na górze)
+  workflow_dispatch:
+
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
       
       - name: Setup Python
@@ -10,12 +24,13 @@ jobs:
         with:
           python-version: '3.11'
       
-      - run: pip install notion-client
+      - name: Install Dependencies
+        run: pip install notion-client
       
-      - name: Run Sync
+      - name: Run Script
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           KALENDARZ_DB_ID: ${{ secrets.KALENDARZ_DB_ID }}
           AKTYWNOSCI_DB_ID: ${{ secrets.AKTYWNOSCI_DB_ID }}
           WYNIKI_DB_ID: ${{ secrets.WYNIKI_DB_ID }}
-        run: echo "Rozpoczynamy synchronizację..."
+        run: python sync.py
