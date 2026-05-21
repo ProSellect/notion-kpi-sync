@@ -9,16 +9,14 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    # TA LINIJKA WYCISZY WARNING I WYMUSI NOWSZĄ WERSJĘ NODE.JS:
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        # Podbita wersja, która natywnie wspiera nowsze środowiska
+        uses: actions/checkout@v4.2.2
       
       - name: Setup Python
-        uses: actions/setup-python@v5
+        # Podbita wersja z pełnym wsparciem dla Node 24
+        uses: actions/setup-python@v5.4.0
         with:
           python-version: '3.11'
       
