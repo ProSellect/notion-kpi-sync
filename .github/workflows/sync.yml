@@ -18,8 +18,9 @@ jobs:
         with:
           python-version: '3.11'
       
+      # ⚠️ TO JEST NAJWAŻNIEJSZA ZMIANA
       - name: Install Dependencies
-        run: pip install notion-client
+        run: pip install "notion-client==2.2.1"  ← ZAMIEŃ NA TĘ LINIULKĘ
       
       - name: Run Script
         env:
