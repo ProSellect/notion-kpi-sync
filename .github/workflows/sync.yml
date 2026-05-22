@@ -11,18 +11,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
       
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.4.0
         with:
           python-version: '3.11'
       
-      - name: Install Dependencies
-        run: pip install "notion-client==2.2.1"
+      - name: Zapamiętaj/Przywróć Cache
+        id: kpi-cache
+        uses: actions/cache@v4
+        with:
+          path: cache
+          key: kpi-cache-v1-${{ github.run_id }}
+          restore-keys: |
+            kpi-cache-v1-
       
       - name: Create Cache Directory
         run: mkdir -p cache
+      
+      - name: Install Dependencies
+        run: pip install "notion-client==2.2.1"
       
       - name: Run Script
         env:
