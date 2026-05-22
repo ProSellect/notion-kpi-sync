@@ -1,4 +1,4 @@
-name: Sync KPI
+name: Sync KPI Engine V2
 
 on:
   schedule:
@@ -11,17 +11,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        # Podbita wersja, która natywnie wspiera nowsze środowiska
-        uses: actions/checkout@v4.2.2
+        uses: actions/checkout@v4
       
       - name: Setup Python
-        # Podbita wersja z pełnym wsparciem dla Node 24
-        uses: actions/setup-python@v5.4.0
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       
       - name: Install Dependencies
         run: pip install "notion-client==2.2.1"
+      
+      - name: Create Cache Directory
+        run: mkdir -p cache
       
       - name: Run Script
         env:
