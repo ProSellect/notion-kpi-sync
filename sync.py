@@ -14,7 +14,13 @@ except KeyError as e:
     exit(1)
 
 def get_formula_value(prop_dict):
-    """Bezpieczne pobranie wartości z formuły"""
+    """Bezpieczne pobranie wartości z pola typu Formula (Suma)"""
+    if prop_dict and "formula" in prop_dict:
+        return prop_dict["formula"].get("number") or 0
+    return 0
+
+def get_number_value(prop_dict):
+    """Bezpieczne pobranie wartości z czystego pola typu Number (#)"""
     if prop_dict:
         return prop_dict.get("number") or 0
     return 0
@@ -90,10 +96,10 @@ def aggregate_period(start_date, end_date):
     
     for row in res:
         p = row["properties"]
-        totals["plan_exec"] += p.get("Target execution", {}).get("number", 0) or 0
-        totals["plan_rel"] += p.get("Target relationship", {}).get("number", 0) or 0
-        totals["execution"] += p.get("Execution (real)", {}).get("number", 0) or 0
-        totals["relationship"] += p.get("Relationship (real)", {}).get("number", 0) or 0
+        totals["plan_exec"] += get_formula_value(p.get("Target execution"))
+        totals["plan_rel"] += get_formula_value(p.get("Target relationship"))
+        totals["execution"] += get_number_value(p.get("Execution (real)"))
+        totals["relationship"] += get_number_value(p.get("Relationship (real)"))
     
     return totals, len(res)
 
@@ -117,10 +123,10 @@ dzien_page = dzien_robo[0]
 dzien_id = dzien_page["id"]
 print(f"✅ Znaleziono dzień roboczy: {dzien_id[:8]}...")
 
-# Pobieramy cele
+# Pobieramy cele (pola Target to Formuły!)
 pobierz_plany = dzien_page["properties"]
-plan_exec = pobierz_plany.get("Target execution", {}).get("number", 0) or 0
-plan_rel = pobierz_plany.get("Target relationship", {}).get("number", 0) or 0
+plan_exec = get_formula_value(pobierz_plany.get("Target execution"))
+plan_rel = get_formula_value(pobierz_plany.get("Target relationship"))
 print(f"📋 Cele z Kalendarza: Execution={plan_exec}, Relationship={plan_rel}\n")
 
 # 2. Policz aktywności
@@ -133,26 +139,12 @@ act_list = notion.databases.query(database_id=AKTYWNOSCI_DB_ID, filter={
 
 print(f"✅ Znaleziono {len(act_list)} rekordów aktywności\n")
 
-if len(act_list) == 0:
-    print("⚠️ UWAGA: Brak aktywności dla tej daty!")
-    print("   Możliwe przyczyny:")
-    print("   1. Pole 'Data' w bazie Aktywności ma inną nazwę (np. 'Data (dzień)')")
-    print("   2. Nie ma wpisów z dzisiejszą datą")
-    print("   3. Dane są w innej bazie\n")
-
 exec_real = 0
 rel_real = 0
 
 print("🔍 KROK 3: Liczę wartości flag...")
 for idx, akt in enumerate(act_list):
     props = akt["properties"]
-    
-    # DEBUG: Wypisz wszystkie nazwy kolumn w pierwszym rekordzie
-    if idx == 0:
-        print(f"   📋 Dostępne kolumny w rekordzie aktywności:")
-        for key in props.keys():
-            print(f"      - {key}")
-        print()
     
     exec_flag = get_formula_value(props.get("Execution flag"))
     sprz_flag = get_formula_value(props.get("Sprzedaż flag"))
@@ -161,7 +153,7 @@ for idx, akt in enumerate(act_list):
     exec_real += exec_flag + sprz_flag
     rel_real += kontakt_flag
     
-    if idx < 3:  # Pokaż pierwsze 3 rekordy
+    if idx < 3:
         print(f"   Rekord {idx+1}: Execution={exec_flag}, Sprzedaż={sprz_flag}, Kontakt={kontakt_flag}")
 
 print(f"\n📊 SUMA: Execution={int(exec_real)}, Relationship={int(rel_real)}")
@@ -188,7 +180,7 @@ print(f"   Relationship KPI: {rel_bar}\n")
 
 update_kpi(id_dnia, exec_bar, rel_bar)
 
-# 5-6. Tydzień i Miesiąc (bez zmian, skrócone dla przejrzystości)
+# 5-6. Tydzień i Miesiąc
 week_start = today - timedelta(days=today.weekday())
 week_end = week_start + timedelta(days=6)
 tydz_nr = today.isocalendar()[1]
