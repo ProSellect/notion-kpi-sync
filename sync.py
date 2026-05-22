@@ -4,6 +4,9 @@ from notion_client import Client
 from datetime import datetime, timedelta
 import calendar
 
+# Ścieżka do pliku pamięci podręcznej (cache)
+CACHE_FILE = "cache/state.json"
+
 try:
     notion = Client(auth=os.environ["NOTION_TOKEN"])
     KALENDARZ_DB_ID = os.environ["KALENDARZ_DB_ID"]
@@ -14,13 +17,11 @@ except KeyError as e:
     exit(1)
 
 def get_formula_value(prop_dict):
-    """Bezpieczne pobranie wartości z pola typu Formula (Suma)"""
     if prop_dict and "formula" in prop_dict:
         return prop_dict["formula"].get("number") or 0
     return 0
 
 def get_number_value(prop_dict):
-    """Bezpieczne pobranie wartości z czystego pola typu Number (#)"""
     if prop_dict:
         return prop_dict.get("number") or 0
     return 0
@@ -28,11 +29,9 @@ def get_number_value(prop_dict):
 def generate_bar(current_val, target_val, max_overflow_blocks=10):
     if target_val == 0:
         return f"⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0/0"
-
     percentage = (current_val / target_val) * 100
     current_int = int(current_val)
     target_int = int(target_val)
-
     if current_val <= target_val:
         filled = round((current_val / target_val) * 10)
         color = "🟩" if percentage >= 70 else "🟦"
@@ -54,18 +53,14 @@ def generate_uid(name, typ):
         return f"WEEK_{today.year}_W{week_num:02d}"
     elif typ == "Miesiąc":
         return f"MONTH_{today.year}_{today.month:02d}"
-    else:
-        return f"UNKNOWN_{name.replace('/', '_')}"
+    return f"UNKNOWN_{name.replace('/', '_')}"
 
 def find_or_create_record(name, db_id, typ, date_ref, period_text):
     results = notion.databases.query(database_id=db_id, filter={"property": "Nazwa", "title": {"equals": name}}).get("results")
     uid = generate_uid(name, typ)
-    
     if results:
         page_id = results[0]["id"]
-        notion.pages.update(page_id=page_id, properties={
-            "UID": {"rich_text": [{"text": {"content": uid}}]}
-        })
+        notion.pages.update(page_id=page_id, properties={"UID": {"rich_text": [{"text": {"content": uid}}]}})
         return page_id, True
     else:
         page = notion.pages.create(parent={"database_id": db_id}, properties={
@@ -91,22 +86,52 @@ def aggregate_period(start_date, end_date):
             {"property": "Dzień roboczy", "checkbox": {"equals": True}}
         ]
     }).get("results", [])
-    
     totals = {"execution": 0, "relationship": 0, "plan_exec": 0, "plan_rel": 0}
-    
     for row in res:
         p = row["properties"]
         totals["plan_exec"] += get_formula_value(p.get("Target execution"))
         totals["plan_rel"] += get_formula_value(p.get("Target relationship"))
         totals["execution"] += get_number_value(p.get("Execution (real)"))
         totals["relationship"] += get_number_value(p.get("Relationship (real)"))
-    
     return totals, len(res)
 
 today = datetime.now().date()
-print(f"\n🔄 START SYNC ENGINE V3 DEBUG: {today}\n")
+print(f"\n🔄 START SYNC ENGINE V3 [CACHE ENABLED]: {today}\n")
 
-# 1. Sprawdź dzień roboczy
+# --- KROK CACHE: Pobierz i sprawdź stan aktywności ---
+print("🔍 SZYBKI DIORAMA: Pobieram dzisiejsze aktywności do weryfikacji...")
+act_list = notion.databases.query(database_id=AKTYWNOSCI_DB_ID, filter={
+    "property": "Data", "date": {"equals": str(today)}
+}).get("results", [])
+
+exec_real = 0
+rel_real = 0
+for akt in act_list:
+    props = akt["properties"]
+    exec_real += get_formula_value(props.get("Execution flag")) + get_formula_value(props.get("Sprzedaż flag"))
+    rel_real += get_formula_value(props.get("Kontakt flag"))
+
+# Przygotuj unikalny podpis obecnych danych
+current_state = {
+    "date": str(today),
+    "exec": int(exec_real),
+    "rel": int(rel_real),
+    "count": len(act_list)
+}
+
+# Próba wczytania poprzedniego cache
+if os.path.exists(CACHE_FILE):
+    try:
+        with open(CACHE_FILE, "r") as f:
+            old_state = json.load(f)
+        if old_state == current_state:
+            print(f"⏸️ CACHE MATCH: Dane dla {today} nie zmieniły się ({current_state['count']} aktywności). Pomijam dalszą synchronizację.")
+            exit(0)
+    except Exception:
+        print("⚠️ Błąd odczytu cache - wymuszam pełny proces.")
+
+# --- KONIEC KROKU CACHE ---
+
 print("🔍 KROK 1: Szukam dzisiejszego dnia roboczego...")
 dzien_robo = notion.databases.query(database_id=KALENDARZ_DB_ID, filter={
     "and": [
@@ -121,66 +146,26 @@ if not dzien_robo:
 
 dzien_page = dzien_robo[0]
 dzien_id = dzien_page["id"]
-print(f"✅ Znaleziono dzień roboczy: {dzien_id[:8]}...")
 
-# Pobieramy cele (pola Target to Formuły!)
 pobierz_plany = dzien_page["properties"]
 plan_exec = get_formula_value(pobierz_plany.get("Target execution"))
 plan_rel = get_formula_value(pobierz_plany.get("Target relationship"))
-print(f"📋 Cele z Kalendarza: Execution={plan_exec}, Relationship={plan_rel}\n")
 
-# 2. Policz aktywności
-print("🔍 KROK 2: Pobieram dzisiejsze aktywności...")
-print(f"   Filtruję bazę Aktywności po: Data == {today}")
+print(f"📊 SUMA: Execution={int(exec_real)}, Relationship={int(rel_real)}")
 
-act_list = notion.databases.query(database_id=AKTYWNOSCI_DB_ID, filter={
-    "property": "Data", "date": {"equals": str(today)}
-}).get("results", [])
-
-print(f"✅ Znaleziono {len(act_list)} rekordów aktywności\n")
-
-exec_real = 0
-rel_real = 0
-
-print("🔍 KROK 3: Liczę wartości flag...")
-for idx, akt in enumerate(act_list):
-    props = akt["properties"]
-    
-    exec_flag = get_formula_value(props.get("Execution flag"))
-    sprz_flag = get_formula_value(props.get("Sprzedaż flag"))
-    kontakt_flag = get_formula_value(props.get("Kontakt flag"))
-    
-    exec_real += exec_flag + sprz_flag
-    rel_real += kontakt_flag
-    
-    if idx < 3:
-        print(f"   Rekord {idx+1}: Execution={exec_flag}, Sprzedaż={sprz_flag}, Kontakt={kontakt_flag}")
-
-print(f"\n📊 SUMA: Execution={int(exec_real)}, Relationship={int(rel_real)}")
-
-# 3. Aktualizacja rekordu w Kalendarzu Pracy
-print(f"\n🔍 KROK 4: Zapisuję do Kalendarza Pracy (ID: {dzien_id[:8]}...)...")
+print(f"\n🔍 KROK 4: Zapisuję do Kalendarza Pracy...")
 notion.pages.update(page_id=dzien_id, properties={
     "Execution (real)": {"number": exec_real}, 
     "Relationship (real)": {"number": rel_real}
 })
-print(f"✅ Zapisano: Execution (real)={int(exec_real)}, Relationship (real)={int(rel_real)}\n")
 
-# 4. Wyniki KPI – DZIEŃ
 nazwa_dnia = today.strftime("%d/%m/%Y")
 period_dnia = today.strftime("%d.%m.%Y")
 id_dnia, _ = find_or_create_record(nazwa_dnia, WYNIKI_DB_ID, "Dzień", today, period_dnia)
 
-exec_bar = generate_bar(exec_real, plan_exec)
-rel_bar = generate_bar(rel_real, plan_rel)
+update_kpi(id_dnia, generate_bar(exec_real, plan_exec), generate_bar(rel_real, plan_rel))
 
-print(f"📊 Paski do zapisania:")
-print(f"   Execution KPI: {exec_bar}")
-print(f"   Relationship KPI: {rel_bar}\n")
-
-update_kpi(id_dnia, exec_bar, rel_bar)
-
-# 5-6. Tydzień i Miesiąc
+# Tydzień i Miesiąc
 week_start = today - timedelta(days=today.weekday())
 week_end = week_start + timedelta(days=6)
 tydz_nr = today.isocalendar()[1]
@@ -197,5 +182,10 @@ okres_mies = f"{calendar.month_name[today.month]} {today.year}"
 tot_mies, _ = aggregate_period(month_start, month_end)
 id_mies, _ = find_or_create_record(nazwa_mies, WYNIKI_DB_ID, "Miesiąc", month_start, okres_mies)
 update_kpi(id_mies, generate_bar(tot_mies["execution"], tot_mies["plan_exec"]), generate_bar(tot_mies["relationship"], tot_mies["plan_rel"]))
+
+# Zapisanie nowego stanu do cache po udanej synchronizacji
+with open(CACHE_FILE, "w") as f:
+    json.dump(current_state, f)
+print("💾 Nowy stan zapisany w pamięci cache.")
 
 print("\n✅ DONE: Wszystkie etapy zakończone!\n")
