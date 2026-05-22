@@ -1,233 +1,173 @@
 import os
+import json
 from notion_client import Client
 from datetime import datetime, timedelta
 import calendar
 
-# Połączenie z Notion
-NOTION_TOKEN = os.environ.get("NOTION_TOKEN")
-KALENDARZ_DB_ID = os.environ.get("KALENDARZ_DB_ID")
-AKTYWNOSCI_DB_ID = os.environ.get("AKTYWNOSCI_DB_ID")
-WYNIKI_DB_ID = os.environ.get("WYNIKI_DB_ID")
+try:
+    notion = Client(auth=os.environ["NOTION_TOKEN"])
+    KALENDARZ_DB_ID = os.environ["KALENDARZ_DB_ID"]
+    AKTYWNOSCI_DB_ID = os.environ["AKTYWNOSCI_DB_ID"]
+    WYNIKI_DB_ID = os.environ["WYNIKI_DB_ID"]
+except KeyError as e:
+    print(f"FATAL BŁĄD: {e}")
+    exit(1)
 
-notion = Client(auth=NOTION_TOKEN)
-
-def generate_bar(current, target, max_overflow_blocks=10):
-    if target == 0:
-        return "⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0/0 (0%)"
-    
-    percentage = (current / target) * 100
-    current_int = int(current)
-    target_int = int(target)
-    
-    if percentage >= 100:
-        status_icon = "✅"
-    elif percentage >= 70:
-        status_icon = "⚠️"
-    else:
-        status_icon = "🚨"
-    
-    if current <= target:
-        filled = round((current / target) * 10)
-        
-        if percentage >= 100:
-            color = "🟩"
-        elif percentage >= 70:
-            color = "🟨"
-        else:
-            color = "🟥"
-        
-        bar = color * filled + "⬜" * (10 - filled)
-        overflow_text = ""
-    else:
-        green_blocks = 10
-        overflow_ratio = (current - target) / target
-        purple_blocks = min(round(overflow_ratio * 10), max_overflow_blocks)
-        
-        bar = "🟩" * green_blocks + "🟪" * purple_blocks
-        overflow_text = f" (+{current_int - target_int})"
-    
-    return f"{bar} {current_int}/{target_int}{overflow_text} {status_icon} ({percentage:.0f}%)"
-
-def get_week_range(date):
-    monday = date - timedelta(days=date.weekday())
-    sunday = monday + timedelta(days=6)
-    return monday, sunday
-
-def get_month_range(date):
-    first = date.replace(day=1)
-    last = date.replace(day=calendar.monthrange(date.year, date.month)[1])
-    return first, last
-
-def get_formula_number(prop):
-    if prop and prop.get("formula"):
-        formula = prop.get("formula", {})
-        if formula.get("type") == "number":
-            return formula.get("number", 0) or 0
+def get_formula_value(prop_dict):
+    """Bezpieczne pobranie wartości z formuły (domyślnie 0)"""
+    if prop_dict:
+        return prop_dict.get("number") or 0
     return 0
 
-def find_or_create_wynik(name, typ, date_ref, okres_text):
-    existing = notion.databases.query(
-        database_id=WYNIKI_DB_ID,
-        filter={"property": "Nazwa", "title": {"equals": name}}
-    ).get("results")
-    
-    if existing:
-        return existing[0]["id"]
+def generate_bar(current_val, target_val, max_overflow_blocks=10):
+    if target_val == 0:
+        return f"⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜ 0/0"
+
+    percentage = (current_val / target_val) * 100
+    current_int = int(current_val)
+    target_int = int(target_val)
+
+    # UNDER TARGET
+    if current_val <= target_val:
+        filled = round((current_val / target_val) * 10)
+
+        if percentage >= 70:
+            color = "🟩"
+        else:
+            color = "🟦"
+
+        bar = color * filled + "⬜" * (10 - filled)
+        return f"{bar} {current_int}/{target_int} ({percentage:.0f}%)"
+
+    # OVERFLOW
     else:
-        new_page = notion.pages.create(
-            parent={"database_id": WYNIKI_DB_ID},
-            properties={
-                "Nazwa": {"title": [{"text": {"content": name}}]},
-                "Typ": {"select": {"name": typ}},
-                "Data": {"date": {"start": str(date_ref)}},
-                "Okres": {"rich_text": [{"text": {"content": okres_text}}]}
-            }
-        )
-        print(f"➕ Utworzono {name}")
-        return new_page["id"]
+        overflow_ratio = (current_val - target_val) / target_val
+        overflow_blocks = min(round(overflow_ratio * 10), max_overflow_blocks)
+        bar = ("🟩" * 10) + ("🟪" * overflow_blocks)
+        overflow_percent = int(percentage - 100)
+        return f"{bar} {current_int}/{target_int} (+{overflow_percent}%)"
 
-def update_wynik_kpi(page_id, kpi_operacje, kpi_kontakt, kpi_sprzedaz):
-    notion.pages.update(
-        page_id=page_id,
-        properties={
-            "Operacje KPI": {"rich_text": [{"text": {"content": kpi_operacje}}]},
-            "Kontakt KPI": {"rich_text": [{"text": {"content": kpi_kontakt}}]},
-            "Sprzedaż KPI": {"rich_text": [{"text": {"content": kpi_sprzedaz}}]}
-        }
-    )
+def find_or_create_record(name, db_id, typ, date_ref, period_text):
+    results = notion.databases.query(database_id=db_id, filter={"property": "Nazwa", "title": {"equals": name}}).get("results")
+    if results: return results[0]["id"], False
+    page = notion.pages.create(parent={"database_id": db_id}, properties={
+        "Nazwa": {"title": [{"text": {"content": name}}]},
+        "Typ": {"select": {"name": typ}},
+        "Data": {"date": {"start": str(date_ref)}},
+        "Okres": {"rich_text": [{"text": {"content": period_text}}]}
+    })
+    return page["id"], True
 
-def aggregate_working_days(start_date, end_date):
-    days = notion.databases.query(
-        database_id=KALENDARZ_DB_ID,
-        filter={
-            "and": [
-                {"property": "Data", "date": {"on_or_after": str(start_date)}},
-                {"property": "Data", "date": {"on_or_before": str(end_date)}},
-                {"property": "Dzień roboczy", "checkbox": {"equals": True}}
-            ]
-        }
-    ).get("results", [])
-    
-    totals = {
-        "operacje_plan": 0, "operacje_real": 0,
-        "kontakt_plan": 0, "kontakt_real": 0,
-        "sprzedaz_plan": 0, "sprzedaz_real": 0
-    }
-    
-    for day in days:
-        props = day["properties"]
-        totals["operacje_plan"] += get_formula_number(props.get("Target operacje"))
-        totals["operacje_real"] += props.get("Operacje (real)", {}).get("number", 0) or 0
-        totals["kontakt_plan"] += get_formula_number(props.get("Target kontakty"))
-        totals["kontakt_real"] += props.get("Kontakty (real)", {}).get("number", 0) or 0
-        totals["sprzedaz_plan"] += get_formula_number(props.get("Target sprzedaż"))
-        totals["sprzedaz_real"] += props.get("Sprzedaż (real)", {}).get("number", 0) or 0
-    
-    return totals, len(days)
+def update_kpi(page_id, exec_str, rel_str):
+    notion.pages.update(page_id=page_id, properties={
+        "Execution KPI": {"rich_text": [{"text": {"content": exec_str}}]},
+        "Relationship KPI": {"rich_text": [{"text": {"content": rel_str}}]}
+    })
 
-# ==================== GŁÓWNY KOD ====================
+def load_cache():
+    try:
+        with open('cache/kpi_cache.json', 'r') as f:
+            return json.load(f)
+    except:
+        return {}
 
-today = datetime.now().date()
-print(f"\n🔄 START: {today} {datetime.now().strftime('%H:%M')}")
+def save_cache(cache):
+    os.makedirs('cache', exist_ok=True)
+    with open('cache/kpi_cache.json', 'w') as f:
+        json.dump(cache, f)
 
-# KROK 1: Sprawdź dzień roboczy
-dzien_roboczy = notion.databases.query(
-    database_id=KALENDARZ_DB_ID,
-    filter={
+def aggregate_period(start_date, end_date):
+    res = notion.databases.query(database_id=KALENDARZ_DB_ID, filter={
         "and": [
-            {"property": "Data", "date": {"equals": str(today)}},
+            {"property": "Data", "date": {"on_or_after": str(start_date)}},
+            {"property": "Data", "date": {"on_or_before": str(end_date)}},
             {"property": "Dzień roboczy", "checkbox": {"equals": True}}
         ]
+    }).get("results", [])
+    
+    totals = {
+        "execution": 0, "relationship": 0, 
+        "plan_exec": 0, "plan_rel": 0
     }
-).get("results")
+    
+    for row in res:
+        p = row["properties"]
+        totals["plan_exec"] += p.get("Target execution", {}).get("number", 0) or 0
+        totals["plan_rel"] += p.get("Target relationship", {}).get("number", 0) or 0
+        totals["execution"] += p.get("Execution (real)", {}).get("number", 0) or 0
+        totals["relationship"] += p.get("Relationship (real)", {}).get("number", 0) or 0
+    
+    return totals, len(res)
 
-if not dzien_roboczy:
-    print("⏸️ Brak dnia roboczego - pomijam")
+today = datetime.now().date()
+print(f"\n🔄 START SYNC ENGINE V2: {today}")
+
+# 1. Sprawdź dzień roboczy
+dzien_robo = notion.databases.query(database_id=KALENDARZ_DB_ID, filter={
+    "and": [
+        {"property": "Data", "date": {"equals": str(today)}},
+        {"property": "Dzień roboczy", "checkbox": {"equals": True}}
+    ]
+}).get("results", [])
+
+if not dzien_robo:
+    print("⏸️ BRAK DNIA ROBOCZEGO!")
     exit(0)
 
-dzien = dzien_roboczy[0]
-props = dzien["properties"]
+dzien_page = dzien_robo[0]
+dzien_id = dzien_page["id"]
 
-plan_op = get_formula_number(props.get("Target operacje"))
-plan_kon = get_formula_number(props.get("Target kontakty"))
-plan_sprz = get_formula_number(props.get("Target sprzedaż"))
+# Pobieramy cele (formuły)
+pobierz_plany = dzien_page["properties"]
+plan_exec = pobierz_plany.get("Target execution", {}).get("number", 0) or 0
+plan_rel = pobierz_plany.get("Target relationship", {}).get("number", 0) or 0
 
-print(f"📋 Plan: Operacje={plan_op}, Kontakty={plan_kon}, Sprzedaż={plan_sprz}")
+# 2. Policz aktywności
+act_list = notion.databases.query(database_id=AKTYWNOSCI_DB_ID, filter={
+    "property": "Data", "date": {"equals": str(today)}
+}).get("results", [])
 
-# KROK 2: Zsumuj flagi z aktywności
-aktywnosci = notion.databases.query(
-    database_id=AKTYWNOSCI_DB_ID,
-    filter={"property": "Data", "date": {"equals": str(today)}}
-).get("results", [])
+exec_real = 0
+rel_real = 0
 
-real_op = 0
-real_kon = 0
-real_sprz = 0
+for akt in act_list:
+    props = akt["properties"]
+    exec_real += get_formula_value(props.get("Execution flag"))
+    exec_real += get_formula_value(props.get("Sprzedaż flag"))  # Backup
+    rel_real += get_formula_value(props.get("Kontakt flag"))
 
-for akt in aktywnosci:
-    akt_props = akt["properties"]
-    real_op += get_formula_number(akt_props.get("Operacje flag"))
-    real_kon += get_formula_number(akt_props.get("Kontakt flag"))
-    real_sprz += get_formula_number(akt_props.get("Sprzedaż flag"))
+# 3. Aktualizacja rekordu w Kalendarzu Pracy (żeby tygodniowe/miesięczne widziały liczby)
+notion.pages.update(page_id=dzien_id, properties={
+    "Execution (real)": {"number": exec_real}, 
+    "Relationship (real)": {"number": rel_real}
+})
 
-print(f"📊 DZIEŃ ({len(aktywnosci)} aktywności): Op {int(real_op)}/{plan_op}, Kon {int(real_kon)}/{plan_kon}, Sprz {int(real_sprz)}/{plan_sprz}")
+print(f"📊 Dzisiaj: Exec:{int(exec_real)}/{int(plan_exec)} | Rel:{int(rel_real)}/{int(plan_rel)}")
 
-# Zapisz do Kalendarz pracy
-notion.pages.update(
-    page_id=dzien["id"],
-    properties={
-        "Operacje (real)": {"number": int(real_op)},
-        "Kontakty (real)": {"number": int(real_kon)},
-        "Sprzedaż (real)": {"number": int(real_sprz)}
-    }
+# 4. Wyniki KPI
+nazwa_dnia = today.strftime("%d/%m/%Y")
+period_dnia = today.strftime("%d.%m.%Y")
+id_dnia, _ = find_or_create_record(nazwa_dnia, WYNIKI_DB_ID, "Dzień", today, period_dnia)
+update_kpi(id_dnia, 
+    generate_bar(exec_real, plan_exec), 
+    generate_bar(rel_real, plan_rel)
 )
 
-# KROK 3: DZIEŃ - zapisz do Wyniki KPI
-dzien_name = today.strftime("%d/%m/%Y")
-dzien_okres = today.strftime("%d.%m.%Y")
-dzien_page_id = find_or_create_wynik(dzien_name, "Dzień", today, dzien_okres)
+# 5. Tydzień
+week_start, week_end = (today - timedelta(days=today.weekday()), today + timedelta(days=6-today.weekday()))
+tydz_nr = today.isocalendar()[1]
+nazwa_tydz = f"Week {tydz_nr:02d}/{today.year}"
+okres_tydz = f"{week_start.strftime('%d.%m')}-{week_end.strftime('%d.%m.%Y')}"
+tot_tydz, _ = aggregate_period(week_start, week_end)
+id_tydz, _ = find_or_create_record(nazwa_tydz, WYNIKI_DB_ID, "Tydzień", week_start, okres_tydz)
+update_kpi(id_tydz, generate_bar(tot_tydz["execution"], tot_tydz["plan_exec"]), generate_bar(tot_tydz["relationship"], tot_tydz["plan_rel"]))
 
-update_wynik_kpi(
-    dzien_page_id,
-    generate_bar(real_op, plan_op),
-    generate_bar(real_kon, plan_kon),
-    generate_bar(real_sprz, plan_sprz)
-)
-print(f"✅ Dzień: {dzien_name}")
+# 6. Miesiąc
+month_start, month_end = (today.replace(day=1), today.replace(day=calendar.monthrange(today.year, today.month)[1]))
+nazwa_mies = f"{month_start.strftime('%Y-%m')}"
+okres_mies = f"{calendar.month_name[today.month]} {today.year}"
+tot_mies, _ = aggregate_period(month_start, month_end)
+id_mies, _ = find_or_create_record(nazwa_mies, WYNIKI_DB_ID, "Miesiąc", month_start, okres_mies)
+update_kpi(id_mies, generate_bar(tot_mies["execution"], tot_mies["plan_exec"]), generate_bar(tot_mies["relationship"], tot_mies["plan_rel"]))
 
-# KROK 4: TYDZIEŃ
-week_start, week_end = get_week_range(today)
-week_num = today.isocalendar()[1]
-week_name = f"Week {week_num:02d}/{today.year}"
-week_okres = f"{week_start.strftime('%d.%m')}-{week_end.strftime('%d.%m.%Y')}"
-
-week_totals, week_days = aggregate_working_days(week_start, week_end)
-print(f"📊 TYDZIEŃ ({week_days} dni): Op {int(week_totals['operacje_real'])}/{int(week_totals['operacje_plan'])}")
-
-week_page_id = find_or_create_wynik(week_name, "Tydzień", week_start, week_okres)
-update_wynik_kpi(
-    week_page_id,
-    generate_bar(week_totals['operacje_real'], week_totals['operacje_plan']),
-    generate_bar(week_totals['kontakt_real'], week_totals['kontakt_plan']),
-    generate_bar(week_totals['sprzedaz_real'], week_totals['sprzedaz_plan'])
-)
-print(f"✅ Tydzień: {week_name}")
-
-# KROK 5: MIESIĄC
-month_start, month_end = get_month_range(today)
-month_name = f"{today.month:02d}/{today.year}"
-month_okres = f"{calendar.month_name[today.month]} {today.year}"
-
-month_totals, month_days = aggregate_working_days(month_start, month_end)
-print(f"📊 MIESIĄC ({month_days} dni): Op {int(month_totals['operacje_real'])}/{int(month_totals['operacje_plan'])}")
-
-month_page_id = find_or_create_wynik(month_name, "Miesiąc", month_start, month_okres)
-update_wynik_kpi(
-    month_page_id,
-    generate_bar(month_totals['operacje_real'], month_totals['operacje_plan']),
-    generate_bar(month_totals['kontakt_real'], month_totals['kontakt_plan']),
-    generate_bar(month_totals['sprzedaz_real'], month_totals['sprzedaz_plan'])
-)
-print(f"✅ Miesiąc: {month_name}")
-
-print(f"\n🎉 KONIEC: {datetime.now().strftime('%H:%M')}\n")
+print("\n🎉 DONE: ALL ENGINES V2 READY!\n")
